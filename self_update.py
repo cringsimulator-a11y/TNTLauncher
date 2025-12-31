@@ -1,79 +1,108 @@
 import os
 import shutil
-import zipfile
 import requests
+import zipfile
+from io import BytesIO
+import tkinter as tk
+from tkinter import ttk
+import threading
 import sys
 
-base_dir = os.path.dirname(os.path.abspath(__file__))
-script_path = os.path.abspath(__file__)
-script_name = os.path.basename(script_path)
+def install_launcher(progress_var, status_label, root):
+    # Step 0: Rename self to TEMPFILE.PY
+    try:
+        script_path = os.path.abspath(__file__)
+        temp_path = os.path.join(os.path.dirname(script_path), "TEMPFILE.PY")
+        if script_path != temp_path:
+            os.rename(script_path, temp_path)
+        script_path = temp_path
+    except Exception as e:
+        status_label.config(text=f"Failed to rename installer: {e}")
+        return
 
-TEMP_DIR = os.path.join(base_dir, "TEMP")
-ZIP_PATH = os.path.join(TEMP_DIR, "repo.zip")
+    parent_dir = os.path.dirname(script_path)
 
-GITHUB_ZIP_URL = "https://github.com/cringsimulator-a11y/TNTLauncher/archive/refs/heads/main.zip"
-
-os.makedirs(TEMP_DIR, exist_ok=True)
-
-r = requests.get(GITHUB_ZIP_URL, stream=True, timeout=30)
-r.raise_for_status()
-
-with open(ZIP_PATH, "wb") as f:
-    for chunk in r.iter_content(8192):
-        if chunk:
-            f.write(chunk)
-
-with zipfile.ZipFile(ZIP_PATH, "r") as z:
-    z.extractall(TEMP_DIR)
-
-os.remove(ZIP_PATH)
-
-unzipped_root = None
-for item in os.listdir(TEMP_DIR):
-    p = os.path.join(TEMP_DIR, item)
-    if os.path.isdir(p):
-        unzipped_root = p
-        break
-
-if not unzipped_root:
-    raise SystemExit("Unzip failed")
-
-launcher_data = os.path.join(unzipped_root, "launcher_data.json")
-if os.path.exists(launcher_data):
-    os.remove(launcher_data)
-
-KEEP = {
-    "Cache",
-    "logs",
-    "launcher_data.json",
-    script_name
-}
-
-for item in os.listdir(base_dir):
-    if item in KEEP:
-        continue
-    p = os.path.join(base_dir, item)
-    if os.path.isdir(p):
-        shutil.rmtree(p, ignore_errors=True)
-    else:
+    # Step 1: Delete everything in parent folder except TEMPFILE.PY
+    status_label.config(text="Cleaning folder...")
+    root.update_idletasks()
+    for item in os.listdir(parent_dir):
+        item_path = os.path.join(parent_dir, item)
+        if item_path == script_path:
+            continue
         try:
-            os.remove(p)
-        except:
-            pass
+            if os.path.isdir(item_path):
+                shutil.rmtree(item_path)
+            else:
+                os.remove(item_path)
+        except Exception as e:
+            print(f"Failed to delete {item_path}: {e}")
 
-temp_self = os.path.join(base_dir, "TEMPFILE")
-os.rename(script_path, temp_self)
+    progress_var.set(10)
 
-for item in os.listdir(unzipped_root):
-    src = os.path.join(unzipped_root, item)
-    dst = os.path.join(base_dir, item)
-    if os.path.exists(dst):
-        if os.path.isdir(dst):
-            shutil.rmtree(dst, ignore_errors=True)
-        else:
-            os.remove(dst)
-    shutil.move(src, dst)
+    # Step 2: Download GitHub repo ZIP
+    status_label.config(text="Downloading launcher files...")
+    root.update_idletasks()
+    github_zip_url = "https://github.com/cringsimulator-a11y/TNTLauncher/archive/refs/heads/main.zip"
+    try:
+        r = requests.get(github_zip_url, stream=True, timeout=60)
+        r.raise_for_status()
+        zip_bytes = BytesIO(r.content)
+    except Exception as e:
+        status_label.config(text=f"Download failed: {e}")
+        return
 
-shutil.rmtree(TEMP_DIR, ignore_errors=True)
+    progress_var.set(40)
 
-os.remove(temp_self)
+    # Step 3: Extract ZIP into parent folder (no extra folder)
+    status_label.config(text="Extracting files...")
+    root.update_idletasks()
+    try:
+        with zipfile.ZipFile(zip_bytes) as zf:
+            root_folder = zf.namelist()[0]  # e.g., "TNTLauncher-main/"
+            files = zf.namelist()
+            total_files = len(files)
+            for i, member in enumerate(files, start=1):
+                filename = os.path.join(parent_dir, os.path.relpath(member, start=root_folder))
+                if member.endswith('/'):
+                    os.makedirs(filename, exist_ok=True)
+                else:
+                    os.makedirs(os.path.dirname(filename), exist_ok=True)
+                    with open(filename, "wb") as f:
+                        f.write(zf.read(member))
+                progress_var.set(40 + int(50 * (i / total_files)))  # progress from 40% to 90%
+                root.update_idletasks()
+    except Exception as e:
+        status_label.config(text=f"Extraction failed: {e}")
+        return
+
+    progress_var.set(100)
+    status_label.config(text="Installation complete!")
+
+    # Step 4: Delete self
+    try:
+        os.remove(script_path)
+    except Exception as e:
+        print(f"Failed to delete installer: {e}")
+
+
+def main():
+    root = tk.Tk()
+    root.title("TNTLauncher Installer")
+    root.geometry("400x150")
+    root.configure(bg="#121212")
+    root.resizable(False, False)
+
+    status_label = tk.Label(root, text="Starting...", fg="white", bg="#121212", font=("Segoe UI", 12))
+    status_label.pack(pady=20)
+
+    progress_var = tk.IntVar()
+    progress_bar = ttk.Progressbar(root, orient="horizontal", length=300, mode="determinate", variable=progress_var)
+    progress_bar.pack(pady=10)
+
+    threading.Thread(target=install_launcher, args=(progress_var, status_label, root), daemon=True).start()
+
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
