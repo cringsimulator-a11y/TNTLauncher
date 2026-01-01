@@ -208,7 +208,7 @@ def download_oneblock():
 
 
 def update_launcher():
-    script_path = os.path.join(os.path.dirname(__file__), "Update.py")
+    script_path = os.path.join(os.path.dirname(__file__), "Updater.py")
     subprocess.Popen([sys.executable, script_path])
 
 
@@ -929,4 +929,5 @@ status.pack(side="right", padx=20)
 
 set_page("Home")
 root.mainloop()
+
 
