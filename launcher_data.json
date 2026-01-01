@@ -1,8 +1,9 @@
 {
-  "username": "DudeTNT",
+  "username": "TNTLauncherPlayer",
   "show_snapshots": false,
   "fabric_version": "fabric-loader-0.18.2-1.21.10",
   "vanilla_version": "1.21.10",
   "download_version": "1.21.10",
   "FabricAPI_Version": "1.21.10"
+
 }
