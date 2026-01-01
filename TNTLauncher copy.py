@@ -208,7 +208,8 @@ def download_oneblock():
 
 
 def update_launcher():
-    
+    script_path = os.path.join(os.path.dirname(__file__), "Update.py")
+    subprocess.Popen([sys.executable, script_path])
 
 
 # ---------- Modrinth Browser ----------
@@ -928,3 +929,4 @@ status.pack(side="right", padx=20)
 
 set_page("Home")
 root.mainloop()
+
