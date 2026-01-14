@@ -11,6 +11,15 @@ import io
 import requests
 from PIL import Image, ImageTk
 
+ICONS = {}
+
+script_dir = os.path.dirname(__file__)  # path to the script itself
+def load_icon2(name, relative_path, size=32):
+    path = os.path.join(script_dir, relative_path)
+    img = Image.open(path).resize((size, size), Image.LANCZOS)
+    # ... store img somewhere, e.g., in a dict
+    print(f"Loaded {name} from {path}")
+
 mc_dir = os.path.join(os.getenv("APPDATA"), ".minecraft")
 
 def ensure_launcher_profiles():
@@ -52,6 +61,7 @@ os.makedirs(MODS_DIR, exist_ok=True)
 
 SEARCH_URL = "https://api.modrinth.com/v2/search"
 VERSION_URL = "https://api.modrinth.com/v2/project/{}/version"
+
 
 def load_data():
     if os.path.exists(data_file):
@@ -118,6 +128,35 @@ def update_vanilla(v):
 def update_fabric(v):
     data["fabric_version"] = v
     save_data()
+
+
+
+
+def get_drive():
+    return "D:\\" if os.path.exists("D:\\") else "C:\\"
+
+BASE_DIR = os.path.join(get_drive(), "TNTLauncher")
+
+def open_skins_page():
+    skins_path = os.path.join(BASE_DIR, "skins.html")
+    skins_path = os.path.abspath(skins_path)
+
+    if not os.path.exists(skins_path):
+        print("skins.html not found")
+        return
+
+    chrome_paths = [
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+    ]
+
+    for chrome in chrome_paths:
+        if os.path.exists(chrome):
+            subprocess.Popen([chrome, skins_path])
+            return
+
+    webbrowser.open(skins_path)
+
 
 def run_script(f):
     p = os.path.join(base_dir, f)
@@ -256,6 +295,54 @@ def update_launcher():
     script_path = os.path.join(os.path.dirname(__file__), "Updater.py")
     subprocess.Popen([sys.executable, script_path])
     
+def download_custom_skin_loader(json_path="launcher_data.json"):
+    # Determine .minecraft folder
+    mc_dir = os.path.join(os.getenv("APPDATA"), ".minecraft")
+    mods_folder = os.path.join(mc_dir, "mods")
+    os.makedirs(mods_folder, exist_ok=True)
+
+    # Read launcher_data.json
+    with open(json_path, "r") as f:
+        data = json.load(f)
+
+    fabric_version_str = data.get("fabric_version", "")
+    if not fabric_version_str:
+        print("Fabric version not found in launcher_data.json")
+        return
+
+    # Extract Minecraft version from fabric_version string
+    mc_version = fabric_version_str.split("-")[-1]
+
+    # Modrinth API to get versions of CustomSkinLoader
+    mod_slug = "customskinloader"
+    url = f"https://api.modrinth.com/v2/project/{mod_slug}/version?game_versions[]={mc_version}&loaders[]=fabric"
+
+    response = requests.get(url)
+    if response.status_code != 200:
+        print("Failed to fetch mod info from Modrinth")
+        return
+
+    versions = response.json()
+    if not versions:
+        print(f"No CustomSkinLoader version found for Minecraft {mc_version}")
+        return
+
+    # Get the first (latest compatible) version
+    file_info = versions[0]["files"][0]
+    mod_download_url = file_info["url"]
+    file_name = os.path.join(mods_folder, file_info["filename"])
+
+    print(f"Downloading CustomSkinLoader for MC {mc_version} into '{mods_folder}'...")
+    r = requests.get(mod_download_url, stream=True)
+    r.raise_for_status()
+
+    with open(file_name, "wb") as f:
+        for chunk in r.iter_content(1024):
+            f.write(chunk)
+
+    print(f"Downloaded {file_info['filename']} to '{mods_folder}'")
+    return file_name
+
 
 # ---------- Modrinth Browser ----------
 def get_mc_version():
@@ -845,15 +932,7 @@ class ModrinthResourcePacks:
 
         return card
 
-    def load_icon(self, url, label, pid):
-        try:
-            r = requests.get(url, timeout=10)
-            img = Image.open(io.BytesIO(r.content)).resize((96, 96))
-            tkimg = ImageTk.PhotoImage(img)
-            self.images[pid] = tkimg
-            self.root.after(0, lambda: label.config(image=tkimg))
-        except:
-            pass
+
 
     def download(self, project_id):
         self.status.config(text="Downloading resource pack...")
@@ -901,91 +980,271 @@ class ModrinthResourcePacks:
             
 
 # ---------- Launcher UI ----------
-root = tk.Tk()
-root.title("TNT Launcher")
-root.state("zoomed")
-root.configure(bg="#121212")
+import tkinter as tk
+from tkinter import ttk
 
-top = tk.Frame(root, bg="#121212")
-top.pack(side="top", fill="x", pady=12)
+root = tk.Tk()
+root.title("TNTLauncher")
+root.geometry("1200x720")
+root.configure(bg="#0b0b12")
+root.resizable(False, False)
+
+# THE LOGO THING CODE HERE STARTS
+# ---------- SPLASH ----------
+splash = tk.Frame(root, bg="#141420")
+splash.place(relx=0, rely=0, relwidth=1, relheight=1)
+
+icon_path = os.path.join(base_dir, "icons", "logo.png")
+icon_img = Image.open(icon_path).resize((100, 100), Image.LANCZOS)
+icon_photo = ImageTk.PhotoImage(icon_img)
+
+splash.icon_photo = icon_photo
+icon_label = tk.Label(splash, image=splash.icon_photo, bg="#141420")
+icon_label.place(relx=0.5, rely=0.5, anchor="center")
+
+# Force splash to render immediately
+root.update()
+
+# Function to hide splash after 10s
+def hide_splash():
+    splash.destroy()
+    # Continue loading the rest of the UI here if you want
+
+# Schedule splash removal
+root.after(30000, hide_splash)
+
+
+# ---------------- PAGE SWITCHER ----------------
 
 pages = {}
 
-for name in ("Home", "Mods", "Installations", "Extra Installs", "Help", "Shaders", "Packs", "Update"):
-    l = tk.Label(top, text=name, fg="white", bg="#121212",
-                 font=("Segoe UI", 14), cursor="hand2")
-    l.pack(side="left", padx=28)
-    l.bind("<Button-1>", lambda e, n=name: set_page(n))
+def show_page(name):
+    for p in pages.values():
+        p.pack_forget()
+    pages[name].pack(fill="both", expand=True)
 
-bottom = tk.Frame(root, bg="#1a1a1a", height=120)
-bottom.pack(side="bottom", fill="x")
-bottom.pack_propagate(False)
+# ---------------- SIDEBAR ----------------
 
-content = tk.Frame(root, bg="#121212")
-content.pack(fill="both", expand=True)
+sidebar = tk.Frame(root, bg="#0f0f18", width=90)
+sidebar.pack(side="left", fill="y")
+sidebar.pack_propagate(False)
 
-home = tk.Frame(content, bg="#121212")
-mods = tk.Frame(content, bg="#121212")
-shaders = tk.Frame(content, bg="#121212")
-packs = tk.Frame(content, bg="#121212")
+tk.Label(
+    sidebar,
+    text="🔥",
+    fg="white",
+    bg="#0f0f18",
+    font=("Segoe UI", 28)
+).pack(pady=20)
 
-installs = tk.Frame(content, bg="#121212")
-help_page = tk.Frame(content, bg="#121212")
-extra_installs = tk.Frame(content, bg="#121212")
+def nav_button(icon_name, page):
+    return tk.Button(
+        sidebar,
+        text=f"   {page.capitalize()}",
+        image=ICONS.get(icon_name),
+        compound="left",
+        anchor="w",
+        font=("Segoe UI", 11, "bold"),
+        bg="#141414",
+        fg="white",
+        activebackground="#1f1f1f",
+        relief="flat",
+        cursor="hand2",
+        padx=14,
+        command=lambda: show_page(page)
+    )
 
-pages["Home"] = home
-pages["Mods"] = mods
-pages["Shaders"] = shaders
-pages["Packs"] = packs
-pages["Installations"] = installs
-pages["Help"] = help_page
-pages["Extra Installs"] = extra_installs
 
-# ---------- Home ----------
-try:
-    banner = tk.PhotoImage(file="mofm.png")
-    tk.Label(home, image=banner, bg="#121212").pack(pady=20)
-except:
-    tk.Label(home, text="TNT LAUNCHER", fg="white", bg="#121212",
-             font=("Segoe UI", 48, "bold")).pack(pady=80)
-tk.Label(home, text="Welcome to TNT Launcher", fg="#aaa", bg="#121212",
-         font=("Segoe UI", 16)).pack()
 
-# ---------- Mods Page ----------
-ModrinthBrowser(mods)
+load_icon2("home", "icons/home.png")
+load_icon2("skins", "icons/skins.png")
+load_icon2("settings", "icons/settings.png")
+load_icon2("installs", "icons/install.png")
+load_icon2("mods", "icons/mods.png")
+load_icon2("shaders", "icons/shader.png")
+load_icon2("packs", "icons/pack.png")
 
-ModrinthShaders(shaders)
+nav_button("home", "home").pack(pady=8, fill="x")
+nav_button("skins", "skins").pack(pady=8, fill="x")
+nav_button("settings", "settings").pack(pady=8, fill="x")
+nav_button("installs", "installs").pack(pady=8, fill="x")
+nav_button("mods", "mods").pack(pady=8, fill="x")
+nav_button("shaders", "shaders").pack(pady=8, fill="x")
+nav_button("packs", "packs").pack(pady=8, fill="x")
 
-ModrinthResourcePacks(packs)
 
-# ---------- Installations Page ----------
-tk.Label(installs, text="Download Vanilla Version", fg="white", bg="#121212",
+# ---------------- MAIN AREA ----------------
+
+main = tk.Frame(root, bg="#0b0b12")
+main.pack(fill="both", expand=True)
+
+# ---------------- HOME PAGE ----------------
+
+home = tk.Frame(main, bg="#0b0b12")
+pages["home"] = home
+
+tk.Label(
+    home,
+    text="Minecraft 1.20.1",
+    fg="white",
+    bg="#0b0b12",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 5))
+
+tk.Label(
+    home,
+    text="Custom Modpack",
+    fg="#7ddc6f",
+    bg="#0b0b12",
+    font=("Segoe UI", 12)
+).pack(anchor="w", padx=40)
+
+card = tk.Frame(home, bg="#141420")
+card.pack(fill="both", expand=True, padx=40, pady=30)
+
+tk.Label(
+    card,
+    text="Welcome to TNTLauncher",
+    fg="white",
+    bg="#141420",
+    font=("Segoe UI", 24, "bold")
+).pack(anchor="w", padx=30, pady=(30, 10))
+
+tk.Label(
+    card,
+    text="Launch vanilla, mods, skins and more from one place.",
+    fg="#aaa",
+    bg="#141420",
+    font=("Segoe UI", 13)
+).pack(anchor="w", padx=30)
+
+tk.Button(
+    card,
+    text="LAUNCH GAME",
+    font=("Segoe UI", 15, "bold"),
+    bg="#3ba55d",
+    fg="white",
+    activebackground="#2e8b57",
+    relief="flat",
+    cursor="hand2",
+    width=18
+).pack(anchor="w", padx=30, pady=30)
+
+# ---------------- SKINS PAGE ----------------
+
+Skins = tk.Frame(main, bg="#0b0b12")
+pages["skins"] = Skins
+
+tk.Label(
+    Skins,
+    text="Skins",
+    fg="white",
+    bg="#0b0b12",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+skins_card = tk.Frame(Skins, bg="#141420")
+skins_card.pack(fill="both", expand=True, padx=40, pady=30)
+
+tk.Button(
+    skins_card,
+    text="Download Skin Mod",
+    font=("Segoe UI", 12, "bold"),
+    bg="#3ba55d",
+    fg="white",
+    activebackground="#2f8f4f",
+    relief="flat",
+    cursor="hand2",
+    width=22,
+    command=download_custom_skin_loader
+).pack(pady=6)
+
+tk.Button(
+    skins_card,
+    text="Open Skin Page",
+    font=("Segoe UI", 12, "bold"),
+    bg="#5865f2",
+    fg="white",
+    activebackground="#4752c4",
+    relief="flat",
+    cursor="hand2",
+    width=22,
+    command=open_skins_page
+).pack(pady=6)
+
+# ---------------- SETTINGS PAGE ----------------
+
+settings = tk.Frame(main, bg="#0b0b12")
+pages["settings"] = settings
+
+tk.Label(
+    settings,
+    text="Settings",
+    fg="white",
+    bg="#0b0b12",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+settings_card = tk.Frame(settings, bg="#141420")
+settings_card.pack(fill="both", expand=True, padx=40, pady=30)
+
+
+# ---------------- SETTINGS PAGE ----------------
+
+installs = tk.Frame(main, bg="#0b0b12")
+pages["installs"] = installs
+
+tk.Label(
+    installs,
+    text="Installs",
+    fg="white",
+    bg="#0b0b12",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+installs_card = tk.Frame(installs, bg="#141420")
+installs_card.pack(fill="both", expand=True, padx=40, pady=30)
+
+tk.Label(installs_card, text="Download Vanilla Version", fg="white", bg="#121212",
          font=("Segoe UI", 18, "bold")).pack(pady=(30, 8))
 vanilla_list = [v["id"] for v in minecraft_launcher_lib.utils.get_version_list() if v["type"]=="release"]
-vd = styled_dropdown(installs, vanilla_list, "download_version")
+vd = styled_dropdown(installs_card, vanilla_list, "download_version")
 vd.pack(pady=6, ipadx=220, ipady=6)
-tk.Button(installs, text="INSTALL", bg="#3ba55d", fg="white",
+tk.Button(installs_card, text="INSTALL", bg="#3ba55d", fg="white",
           font=("Segoe UI", 12, "bold"), width=22,
           command=lambda: run_script("thevdowntest.py")).pack(pady=12)
-tk.Label(installs, text="Download Fabric Version", fg="white", bg="#121212",
+tk.Label(installs_card, text="Download Fabric Version", fg="white", bg="#121212",
          font=("Segoe UI", 18, "bold")).pack(pady=(30, 8))
-tk.Button(installs, text="INSTALL", bg="#5865f2", fg="white",
+tk.Button(installs_card, text="INSTALL", bg="#5865f2", fg="white",
           font=("Segoe UI", 12, "bold"), width=22,
           command=lambda: run_script("fabric-installer-1.1.0 (3).exe")).pack(pady=12)
-tk.Label(installs, text="Fabric API Download", fg="white", bg="#121212",
+tk.Label(installs_card, text="Fabric API Download", fg="white", bg="#121212",
          font=("Segoe UI", 18, "bold")).pack(pady=(30, 8))
 fabric_api_versions = ["1.21.11","1.21.10","1.21.9","1.21.8"]
-fad = styled_dropdown(installs, fabric_api_versions, "FabricAPI_Version")
+fad = styled_dropdown(installs_card, fabric_api_versions, "FabricAPI_Version")
 fad.pack(pady=6, ipadx=220, ipady=6)
-tk.Button(installs, text="INSTALL", bg="#5865f2", fg="white",
+tk.Button(installs_card, text="INSTALL", bg="#5865f2", fg="white",
           font=("Segoe UI", 12, "bold"), width=22,
           command=lambda: run_script("install_fabric_api.py")).pack(pady=12)
 
-# ---------- Extra Installs & Help Page ----------
-tk.Label(help_page, text="Help Page", fg="white", bg="#121212", font=("Segoe UI",22)).pack(expand=True)
+# ---------------- SETTINGS PAGE ----------------
+
+extra_installs = tk.Frame(main, bg="#0b0b12")
+pages["extra_installs"] = extra_installs
 
 tk.Label(
     extra_installs,
+    text="Extra Installs",
+    fg="white",
+    bg="#0b0b12",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+extra_installs_card = tk.Frame(extra_installs, bg="#141420")
+extra_installs_card.pack(fill="both", expand=True, padx=40, pady=30)
+
+tk.Label(
+    extra_installs_card,
     text="Extra Installs",
     fg="white",
     bg="#121212",
@@ -998,7 +1257,7 @@ btn_frame.pack(pady=10)
 
 
 tk.Button(
-    btn_frame,
+    extra_installs_card,
     text="Download Skyblock",
     font=("Segoe UI", 12, "bold"),
     bg="#5865f2",
@@ -1012,7 +1271,7 @@ tk.Button(
 
 
 tk.Button(
-    btn_frame,
+    extra_installs_card,
     text="Download Oneblock",
     font=("Segoe UI", 12, "bold"),
     bg="#3ba55d",
@@ -1025,20 +1284,7 @@ tk.Button(
 ).pack(pady=6)
 
 tk.Button(
-    btn_frame,
-    text="Update Launcher",
-    font=("Segoe UI", 12, "bold"),
-    bg="#3ba55d",
-    fg="white",
-    activebackground="#2f8f4f",
-    relief="flat",
-    cursor="hand2",
-    width=22,
-    command=update_launcher
-).pack(pady=6)
-
-tk.Button(
-    btn_frame,
+    extra_installs_card,
     text="Download Java 21",
     font=("Segoe UI", 12, "bold"),
     bg="#3ba55d",
@@ -1050,10 +1296,57 @@ tk.Button(
     command=download_java21
 ).pack(pady=6)
 
+# ---------------- SETTINGS PAGE ----------------
 
-# ---------- Bottom Bar ----------
-tk.Label(bottom, text="Username:", fg="white", bg="#1a1a1a", font=("Segoe UI", 12)).pack(side="left", padx=16)
-username_entry = tk.Entry(bottom, font=("Segoe UI",12), width=20)
+mods = tk.Frame(main, bg="#0b0b12")
+pages["mods"] = mods
+
+tk.Label(
+    mods,
+    text="Mods",
+    fg="white",
+    bg="#0f0f18",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+ModrinthBrowser(mods)
+
+# ---------------- SETTINGS PAGE ----------------
+
+shaders = tk.Frame(main, bg="#0b0b12")
+pages["shaders"] = shaders
+
+tk.Label(
+    shaders,
+    bg="#141420",
+    text="Shaders",
+    fg="white",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+ModrinthShaders(shaders)
+
+# ---------------- SETTINGS PAGE ----------------
+
+packs = tk.Frame(main, bg="#0b0b12")
+pages["packs"] = packs
+
+tk.Label(
+    packs,
+    text="Packs",
+    bg="#0f0f18",
+    fg="white",
+    font=("Segoe UI", 28, "bold")
+).pack(anchor="w", padx=40, pady=(30, 10))
+
+ModrinthResourcePacks(packs)
+
+
+
+
+
+tk.Label(home, text="Username:", fg="white", font=("Segoe UI", 12),bg="#0f0f18").pack(side="left", padx=16)
+username_entry = tk.Entry(home, font=("Segoe UI",12), width=20, bg="#0f0f18",)
 username_entry.insert(0, data["username"])
 username_entry.pack(side="left")
 username_entry.bind("<FocusOut>", update_username)
@@ -1063,18 +1356,19 @@ fabric_versions = get_fabric_versions()
 vanilla_var = tk.StringVar(value=data.get("vanilla_version") or (vanilla_versions[0] if vanilla_versions else ""))
 fabric_var = tk.StringVar(value=data.get("fabric_version") or (fabric_versions[0] if fabric_versions else ""))
 
-tk.Label(bottom, text="Vanilla", fg="white", bg="#1a1a1a", font=("Segoe UI",12)).pack(side="left", padx=18)
-tk.OptionMenu(bottom, vanilla_var, *vanilla_versions, command=update_vanilla).pack(side="left")
-tk.Button(bottom, text="PLAY", bg="#3ba55d", fg="white", font=("Segoe UI",12,"bold"),
+tk.Label(home, bg="#0f0f18", text="Vanilla", fg="white", font=("Segoe UI",12)).pack(side="left", padx=18)
+tk.OptionMenu(home, vanilla_var, *vanilla_versions, command=update_vanilla).pack(side="left")
+tk.Button(home, text="PLAY", bg="#3ba55d", fg="white", font=("Segoe UI",12,"bold"),
           command=play_vanilla).pack(side="left", padx=14, ipadx=26, ipady=10)
 
-tk.Label(bottom, text="Fabric", fg="white", bg="#1a1a1a", font=("Segoe UI",12)).pack(side="left", padx=18)
-tk.OptionMenu(bottom, fabric_var, *fabric_versions, command=update_fabric).pack(side="left")
-tk.Button(bottom, text="PLAY", bg="#5865f2", fg="white", font=("Segoe UI",12,"bold"),
+tk.Label(home, bg="#0f0f18", text="Fabric", fg="white", font=("Segoe UI",12)).pack(side="left", padx=18)
+tk.OptionMenu(home, fabric_var, *fabric_versions, command=update_fabric).pack(side="left")
+tk.Button(home, text="PLAY", bg="#5865f2", fg="white", font=("Segoe UI",12,"bold"),
           command=play_fabric).pack(side="left", padx=14, ipadx=26, ipady=10)
 
-status = tk.Label(bottom, text="", fg="#aaa", bg="#1a1a1a", font=("Segoe UI",11))
+status = tk.Label(home, bg="#0f0f18", text="", fg="#aaa", font=("Segoe UI",11))
 status.pack(side="right", padx=20)
+# ---------------- START ----------------
 
-set_page("Home")
+show_page("home")
 root.mainloop()
